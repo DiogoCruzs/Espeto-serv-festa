@@ -31,3 +31,7 @@ python -m unittest discover -s tests -v
 
 O cálculo usa centavos inteiros. O custo dos produtos vendidos é congelado na venda e é diferente do total de compras.
 
+## Conferência de vendas sem lançamento individual
+
+Quando não for possível registrar cada venda durante o atendimento, abra **Contagem de estoque → Conferência de vendas**. Registre a contagem inicial antes do movimento e a contagem final no dia seguinte, antes de novas entradas. O sistema considera entradas, perdas e vendas manuais no intervalo e registra a diferença restante como venda estimada por produto, calculando faturamento, custo e lucro bruto.
+
