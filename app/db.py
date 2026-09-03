@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS product_price_history (id INTEGER PRIMARY KEY, produc
 CREATE TABLE IF NOT EXISTS audit_logs (id INTEGER PRIMARY KEY, created_at TEXT NOT NULL, user_id INTEGER REFERENCES users(id), action TEXT NOT NULL, entity_type TEXT NOT NULL, entity_id INTEGER, details TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS inventory_counts (id INTEGER PRIMARY KEY, counted_at TEXT NOT NULL, user_id INTEGER NOT NULL REFERENCES users(id), notes TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS inventory_count_items (id INTEGER PRIMARY KEY, count_id INTEGER NOT NULL REFERENCES inventory_counts(id), product_id INTEGER NOT NULL REFERENCES products(id), system_qty INTEGER NOT NULL, physical_qty INTEGER NOT NULL, difference INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS count_sessions (id INTEGER PRIMARY KEY, started_at TEXT NOT NULL, closed_at TEXT, user_id INTEGER NOT NULL REFERENCES users(id), status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','closed')), notes TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS count_session_items (id INTEGER PRIMARY KEY, session_id INTEGER NOT NULL REFERENCES count_sessions(id), product_id INTEGER NOT NULL REFERENCES products(id), opening_qty INTEGER NOT NULL, closing_qty INTEGER, entry_qty INTEGER NOT NULL DEFAULT 0, explicit_sale_qty INTEGER NOT NULL DEFAULT 0, other_out_qty INTEGER NOT NULL DEFAULT 0, inferred_sale_qty INTEGER NOT NULL DEFAULT 0, discrepancy_qty INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS idx_sales_sold_at ON sales(sold_at);
 CREATE INDEX IF NOT EXISTS idx_movements_product_date ON stock_movements(product_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_audit_date ON audit_logs(created_at);
