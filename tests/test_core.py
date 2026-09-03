@@ -56,9 +56,26 @@ class CoreFlowTests(unittest.TestCase):
         response=self.client.get("/")
         self.assertIn(b"Alertas de estoque",response.data)
         self.assertIn(b"Espeto de Carne",response.data)
-        for path in ["/", "/sale", "/sales", "/purchases", "/stock", "/inventory", "/products", "/reports", "/close/daily", "/close/monthly", "/need-to-buy", "/audit", "/users", "/settings"]:
+        for path in ["/", "/sale", "/sales", "/purchases", "/stock", "/inventory", "/reconcile", "/products", "/reports", "/close/daily", "/close/monthly", "/need-to-buy", "/audit", "/users", "/settings"]:
             response=self.client.get(path)
             self.assertEqual(response.status_code,200,path)
+
+    def test_4_count_reconciliation_estimates_unregistered_sales(self):
+        token=self.csrf()
+        response=self.client.post("/reconcile",data={"csrf_token":token,"opening_1":"40"})
+        self.assertEqual(response.status_code,302)
+        response=self.client.get("/reconcile")
+        self.assertIn(b"Registrar contagem final",response.data)
+        token=self.csrf()
+        response=self.client.post("/reconcile",data={"csrf_token":token,"closing_1":"25"})
+        self.assertEqual(response.status_code,302)
+        from app.db import get_db
+        with get_db() as db:
+            row=db.execute("SELECT inferred_sale_qty FROM count_session_items WHERE product_id=1 ORDER BY id DESC LIMIT 1").fetchone()
+            self.assertEqual(row[0],15)
+            sale=db.execute("SELECT total_qty FROM sales WHERE status='completed' ORDER BY id DESC LIMIT 1").fetchone()
+            self.assertEqual(sale[0],15)
+            self.assertEqual(db.execute("SELECT stock_qty FROM products WHERE id=1").fetchone()[0],25)
 
 if __name__=="__main__": unittest.main()
 
