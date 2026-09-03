@@ -167,6 +167,47 @@ def inventory():
             audit(db,user["id"],"Inventário realizado","inventory",count_id); flash("Inventário aplicado e divergências registradas.","success"); return redirect(url_for("main.inventory"))
     return render_template("inventory.html",products=products)
 
+@bp.route("/reconcile", methods=["GET","POST"])
+@login_required
+def reconcile():
+    user=current_user()
+    try:
+        with get_db() as db:
+            open_session=db.execute("SELECT * FROM count_sessions WHERE status='open' ORDER BY id DESC LIMIT 1").fetchone()
+            products=load_products(db)
+            open_session_items=db.execute("SELECT * FROM count_session_items WHERE session_id=?",(open_session["id"],)).fetchall() if open_session else []
+            if request.method=="POST" and not open_session:
+                cur=db.execute("INSERT INTO count_sessions(started_at,user_id,notes) VALUES (?,?,?)",(now_iso(),user["id"],request.form.get("notes","").strip())); session_id=cur.lastrowid
+                for product in products:
+                    opening=int(request.form.get(f"opening_{product['id']}",product["stock_qty"]))
+                    if opening<0: raise ValueError("A contagem não pode ser negativa.")
+                    if opening!=product["stock_qty"]: change_stock(db,product["id"],opening-product["stock_qty"],user["id"],"Inventário",reason="Abertura da conferência")
+                    db.execute("INSERT INTO count_session_items(session_id,product_id,opening_qty) VALUES (?,?,?)",(session_id,product["id"],opening))
+                audit(db,user["id"],"Conferência de vendas iniciada","count_session",session_id); flash("Contagem inicial salva. Amanhã, informe a contagem final antes da nova entrada.","success"); return redirect(url_for("main.reconcile"))
+            if request.method=="POST" and open_session:
+                closed_at=now_iso(); prepared=[]; totals=[]
+                items=db.execute("SELECT csi.*,p.name,p.sale_price_cents,p.avg_cost_cents FROM count_session_items csi JOIN products p ON p.id=csi.product_id WHERE csi.session_id=? ORDER BY p.name",(open_session["id"],)).fetchall()
+                for item in items:
+                    closing=int(request.form.get(f"closing_{item['product_id']}",item["opening_qty"]))
+                    if closing<0: raise ValueError("A contagem não pode ser negativa.")
+                    movement=db.execute("SELECT COALESCE(SUM(CASE WHEN movement_type='Entrada' THEN qty_delta ELSE 0 END),0) entry_qty,COALESCE(SUM(CASE WHEN movement_type='Venda' THEN qty_delta ELSE 0 END),0) sale_out,COALESCE(SUM(CASE WHEN movement_type='Cancelamento' THEN qty_delta ELSE 0 END),0) sale_return,COALESCE(SUM(CASE WHEN movement_type IN ('Perda','Perda/Quebra','Cortesia','Consumo','Ajuste') AND qty_delta<0 THEN ABS(qty_delta) ELSE 0 END),0) other_out FROM stock_movements WHERE product_id=? AND created_at>? AND created_at<=?",(item["product_id"],open_session["started_at"],closed_at)).fetchone()
+                    explicit_sale=max(0,movement["sale_out"]-movement["sale_return"]); expected=item["opening_qty"]+movement["entry_qty"]-explicit_sale-movement["other_out"]; inferred=max(0,expected-closing); extra=max(0,closing-expected)
+                    totals.append((item,closing,movement["entry_qty"],explicit_sale,movement["other_out"],inferred,extra));
+                    if inferred: prepared.append((item,inferred,item["sale_price_cents"],item["avg_cost_cents"]))
+                total_qty=sum(x[1] for x in prepared); revenue=sum(x[1]*x[2] for x in prepared); cogs=sum(x[1]*x[3] for x in prepared); sale_id=None
+                if total_qty:
+                    cur=db.execute("INSERT INTO sales(sold_at,user_id,total_qty,revenue_cents,cogs_cents,gross_profit_cents) VALUES (?,?,?,?,?,?)",(closed_at,user["id"],total_qty,revenue,cogs,revenue-cogs)); sale_id=cur.lastrowid
+                    for item,qty,price,cost in prepared:
+                        db.execute("INSERT INTO sale_items(sale_id,product_id,quantity,sale_price_cents,unit_cost_cents,revenue_cents,cogs_cents,gross_profit_cents) VALUES (?,?,?,?,?,?,?,?)",(sale_id,item["product_id"],qty,price,cost,qty*price,qty*cost,qty*(price-cost))); change_stock(db,item["product_id"],-qty,user["id"],"Venda",reason="Venda estimada por conferência",reference_type="count_session",reference_id=open_session["id"])
+                for item,closing,entry_qty,explicit_sale,other_out,inferred,extra in totals:
+                    if extra: change_stock(db,item["product_id"],extra,user["id"],"Inventário",reason="Excesso na conferência",reference_type="count_session",reference_id=open_session["id"])
+                    db.execute("UPDATE count_session_items SET closing_qty=?,entry_qty=?,explicit_sale_qty=?,other_out_qty=?,inferred_sale_qty=?,discrepancy_qty=? WHERE id=?",(closing,entry_qty,explicit_sale,other_out,inferred,extra,item["id"]))
+                db.execute("UPDATE count_sessions SET status='closed',closed_at=? WHERE id=?",(closed_at,open_session["id"])); audit(db,user["id"],"Conferência de vendas encerrada","count_session",open_session["id"],f"Venda estimada: {total_qty} unidades")
+                flash(f"Conferência encerrada. Venda estimada: {total_qty} espetos." if total_qty else "Conferência encerrada. Nenhuma venda estimada.","success"); return redirect(url_for("main.reconcile"))
+            history=db.execute("SELECT cs.*,u.name user_name,COALESCE(SUM(csi.inferred_sale_qty),0) inferred_qty FROM count_sessions cs JOIN users u ON u.id=cs.user_id LEFT JOIN count_session_items csi ON csi.session_id=cs.id GROUP BY cs.id ORDER BY cs.id DESC LIMIT 20").fetchall()
+    except (ValueError,sqlite3.Error) as exc: flash(str(exc),"error"); return redirect(url_for("main.reconcile"))
+    return render_template("reconcile.html",products=products,open_session=open_session,open_session_items=open_session_items,history=history)
+
 @bp.route("/products", methods=["GET","POST"])
 @admin_required
 def products():
